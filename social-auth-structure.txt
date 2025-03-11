@@ -1,0 +1,53 @@
+project-root/
+│
+├── .env.example
+│
+├── app/
+│   ├── Http/
+│   │   ├── Controllers/
+│   │   │   └── API/
+│   │   │       └── SocialAuthController.php
+│   │   │
+│   │   ├── Requests/
+│   │   │   └── API/
+│   │   │       ├── SocialAuthUrlRequest.php
+│   │   │       └── SocialAuthCallbackRequest.php
+│   │   │
+│   │   └── Resources/
+│   │       └── API/
+│   │           └── AuthResource.php
+│   │
+│   ├── Services/
+│   │   └── SocialAuth/
+│   │       ├── SocialAuthService.php
+│   │       │
+│   │       ├── Providers/
+│   │       │   ├── SocialAuthProviderInterface.php
+│   │       │   ├── GoogleAuthProvider.php
+│   │       │   └── FacebookAuthProvider.php
+│   │       │
+│   │       └── Exceptions/
+│   │           ├── IAMServiceException.php
+│   │           ├── InvalidStateException.php
+│   │           ├── TokenExchangeException.php
+│   │           └── UserInfoFetchException.php
+│   │
+│   ├── Models/
+│   │   ├── User.php
+│   │   └── SocialProvider.php
+│   │
+│   └── Providers/
+│       └── SocialAuthServiceProvider.php
+│
+├── config/
+│   └── social-auth.php
+│
+├── database/
+│   └── migrations/
+│       └── 2025_03_11_063744_create_social_providers_table.php
+│
+├── public/
+│   └── social-login.html
+│
+└── routes/
+    └── api.php

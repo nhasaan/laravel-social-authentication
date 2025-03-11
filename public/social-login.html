@@ -1,0 +1,356 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Social Login</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+</head>
+
+<body class="bg-gray-100 min-h-screen flex items-center justify-center">
+    <div class="bg-white p-8 rounded-lg shadow-md w-full max-w-md">
+        <!-- Initial Login View -->
+        <div id="login-view">
+            <h1 class="text-2xl font-bold mb-6 text-center">Social Login</h1>
+
+            <button onclick="loginWithGoogle()"
+                class="w-full flex items-center justify-center gap-2 py-2 px-4 bg-white hover:bg-gray-100 text-gray-800 border border-gray-300 rounded-md">
+                <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 48 48">
+                    <path fill="#FFC107"
+                        d="M43.611 20.083H42V20H24v8h11.303c-1.649 4.657-6.08 8-11.303 8c-6.627 0-12-5.373-12-12s5.373-12 12-12c3.059 0 5.842 1.154 7.961 3.039l5.657-5.657C34.046 6.053 29.268 4 24 4C12.955 4 4 12.955 4 24s8.955 20 20 20s20-8.955 20-20c0-1.341-.138-2.65-.389-3.917z">
+                    </path>
+                    <path fill="#FF3D00"
+                        d="m6.306 14.691l6.571 4.819C14.655 15.108 18.961 12 24 12c3.059 0 5.842 1.154 7.961 3.039l5.657-5.657C34.046 6.053 29.268 4 24 4C16.318 4 9.656 8.337 6.306 14.691z">
+                    </path>
+                    <path fill="#4CAF50"
+                        d="M24 44c5.166 0 9.86-1.977 13.409-5.192l-6.19-5.238A11.91 11.91 0 0 1 24 36c-5.202 0-9.619-3.317-11.283-7.946l-6.522 5.025C9.505 39.556 16.227 44 24 44z">
+                    </path>
+                    <path fill="#1976D2"
+                        d="M43.611 20.083H42V20H24v8h11.303a12.04 12.04 0 0 1-4.087 5.571l.003-.002l6.19 5.238C36.971 39.205 44 34 44 24c0-1.341-.138-2.65-.389-3.917z">
+                    </path>
+                </svg>
+                Login with Google
+            </button>
+        </div>
+
+        <!-- MSISDN Input View -->
+        <div id="msisdn-view" class="hidden">
+            <h1 class="text-2xl font-bold mb-4 text-center">Enter Your Mobile Number</h1>
+
+            <div id="user-profile" class="mb-4 text-center">
+                <img id="profile-image" src="" alt="Profile" class="w-16 h-16 rounded-full mx-auto mb-2">
+                <div id="user-name" class="font-medium"></div>
+                <div id="user-email" class="text-sm text-gray-600"></div>
+            </div>
+
+            <div class="mb-4">
+                <label for="msisdn" class="block text-sm font-medium text-gray-700 mb-1">Mobile Number</label>
+                <input type="text" id="msisdn" placeholder="8801952401104"
+                    class="w-full px-3 py-2 border border-gray-300 rounded-md">
+            </div>
+
+            <button onclick="sendOtp()" class="w-full py-2 px-4 bg-blue-500 hover:bg-blue-600 text-white rounded-md">
+                Send OTP
+            </button>
+        </div>
+
+        <!-- OTP Verification View -->
+        <div id="otp-view" class="hidden">
+            <h1 class="text-2xl font-bold mb-4 text-center">Verify OTP</h1>
+
+            <p class="mb-4 text-sm text-gray-700">Enter the verification code sent to your mobile number.</p>
+
+            <div class="mb-4">
+                <label for="otp" class="block text-sm font-medium text-gray-700 mb-1">OTP Code</label>
+                <input type="text" id="otp" placeholder="Enter OTP"
+                    class="w-full px-3 py-2 border border-gray-300 rounded-md">
+            </div>
+
+            <button onclick="verifyOtp()" class="w-full py-2 px-4 bg-blue-500 hover:bg-blue-600 text-white rounded-md">
+                Verify
+            </button>
+        </div>
+
+        <!-- Success View -->
+        <div id="success-view" class="hidden">
+            <div class="text-center mb-6">
+                <svg xmlns="http://www.w3.org/2000/svg" class="h-16 w-16 text-green-500 mx-auto" fill="none"
+                    viewBox="0 0 24 24" stroke="currentColor">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7" />
+                </svg>
+                <h1 class="text-2xl font-bold mt-4">Login Successful</h1>
+            </div>
+
+            <pre id="auth-result" class="bg-gray-100 p-3 rounded overflow-auto max-h-60 text-xs"></pre>
+        </div>
+
+        <!-- Error Display -->
+        <div id="error-message" class="hidden mt-4 p-3 bg-red-100 text-red-700 rounded"></div>
+    </div>
+
+    <script>
+        // State storage for auth flow
+        let authState = {
+            provider: 'google',
+            code: null,
+            state: null,
+            msisdn: null,
+            otp: null,
+            userProfile: null
+        }
+
+        // Login with Google
+        function loginWithGoogle() {
+            // Get auth URL from backend
+            fetch('/api/auth/social/url', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ provider: 'google' })
+            })
+                .then(response => response.json())
+                .then(data => {
+                    if (!data.data || !data.data.url) {
+                        throw new Error('Failed to get authorization URL')
+                    }
+
+                    // Save state
+                    authState.state = data.data.state
+
+                    // Open popup
+                    const popup = openPopup(data.data.url)
+                    monitorPopup(popup)
+                })
+                .catch(error => {
+                    showError(error.message)
+                })
+        }
+
+        // Open popup window
+        function openPopup(url) {
+            const width = 600
+            const height = 600
+            const left = window.screen.width / 2 - width / 2
+            const top = window.screen.height / 2 - height / 2
+
+            return window.open(
+                url,
+                'googleAuthPopup',
+                `width=${width},height=${height},left=${left},top=${top}`
+            )
+        }
+
+        // Monitor popup for redirect
+        function monitorPopup(popup) {
+            if (!popup) {
+                showError('Popup blocked. Please allow popups for this site.')
+                return
+            }
+
+            const timer = setInterval(() => {
+                if (popup.closed) {
+                    clearInterval(timer)
+                    return
+                }
+
+                try {
+                    const currentUrl = popup.location.href
+
+                    if (currentUrl.includes('code=') && currentUrl.includes('state=')) {
+                        // Extract code and state
+                        const urlParams = new URLSearchParams(new URL(currentUrl).search)
+                        const code = urlParams.get('code')
+                        const state = urlParams.get('state')
+
+                        // Validate state
+                        if (state !== authState.state) {
+                            throw new Error('Invalid state parameter')
+                        }
+
+                        // Store code
+                        authState.code = code
+
+                        // Close popup
+                        popup.close()
+                        clearInterval(timer)
+
+                        // Process authentication
+                        processAuth()
+                    }
+                } catch (e) {
+                    // Ignore cross-origin errors (expected)
+                    if (!(e instanceof DOMException) && e.name !== 'SecurityError') {
+                        console.error(e)
+                    }
+                }
+            }, 500)
+        }
+
+        // Process authentication after getting code
+        function processAuth() {
+            fetch('/api/auth/social/callback', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    provider: authState.provider,
+                    code: authState.code,
+                    state: authState.state
+                })
+            })
+                .then(response => response.json())
+                .then(response => {
+                    // Check for success flag
+                    if (!response.success) {
+                        throw new Error(response.error || 'Authentication failed')
+                    }
+
+                    // Get the result from the data property
+                    const result = response.data
+
+                    if (result.status === 'msisdn_required') {
+                        // Store code and state from response
+                        authState.code = result.code
+                        authState.state = result.state
+                        authState.userProfile = result.user_profile
+
+                        // Show MSISDN input view with user profile
+                        displayUserProfile(result.user_profile)
+                        showView('msisdn-view')
+                    } else if (result.status === 'success') {
+                        // Show success view immediately
+                        showAuthSuccess(result)
+                    } else {
+                        // Handle other statuses
+                        console.log("Unexpected status:", result.status)
+                        showAuthSuccess(result)
+                    }
+                })
+                .catch(error => {
+                    showError(error.message)
+                })
+        }
+
+        // Display user profile in MSISDN view
+        function displayUserProfile(profile) {
+            if (profile) {
+                document.getElementById('user-name').textContent = profile.name || ''
+                document.getElementById('user-email').textContent = profile.email || ''
+                document.getElementById('profile-image').src = profile.picture || 'https://via.placeholder.com/100'
+            }
+        }
+
+        // Send OTP
+        function sendOtp() {
+            const msisdn = document.getElementById('msisdn').value
+
+            // Basic validation
+            if (!msisdn || !/^8801\d{9}$/.test(msisdn)) {
+                showError('Please enter a valid Bangladesh mobile number')
+                return
+            }
+
+            // Store MSISDN
+            authState.msisdn = msisdn
+
+            // Call API to send OTP
+            fetch('/api/auth/social/send-otp', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    msisdn: msisdn
+                })
+            })
+                .then(response => response.json())
+                .then(response => {
+                    if (!response.success) {
+                        throw new Error(response.error || 'Failed to send OTP')
+                    }
+
+                    // Show OTP view
+                    showView('otp-view')
+                })
+                .catch(error => {
+                    showError(error.message)
+                })
+        }
+
+        // Verify OTP and complete authentication
+        function verifyOtp() {
+            const otp = document.getElementById('otp').value
+
+            // Basic validation
+            if (!otp || otp.length < 4) {
+                showError('Please enter a valid OTP')
+                return
+            }
+
+            // Store OTP
+            authState.otp = otp
+
+            console.log('authState: ', authState);
+
+            // Call callback with all required data
+            fetch('/api/auth/social/callback', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    provider: authState.provider,
+                    code: authState.code,
+                    state: authState.state,
+                    msisdn: authState.msisdn,
+                    otp: otp
+                })
+            })
+                .then(response => response.json())
+                .then(response => {
+                    if (!response.success) {
+                        throw new Error(response.error || 'Authentication failed')
+                    }
+
+                    // Show success view
+                    showAuthSuccess(response.data)
+                })
+                .catch(error => {
+                    showError(error.message)
+                })
+        }
+
+        // Show authentication success
+        function showAuthSuccess(result) {
+            // Display result data
+            document.getElementById('auth-result').textContent = JSON.stringify(result, null, 2)
+
+            // Show success view
+            showView('success-view')
+        }
+
+        // Show error message
+        function showError(message) {
+            const errorElement = document.getElementById('error-message')
+            errorElement.textContent = message
+            errorElement.classList.remove('hidden')
+        }
+
+        // Hide error message
+        function hideError() {
+            document.getElementById('error-message').classList.add('hidden')
+        }
+
+        // Show specific view, hide others
+        function showView(viewId) {
+            // Hide all views
+            document.getElementById('login-view').classList.add('hidden')
+            document.getElementById('msisdn-view').classList.add('hidden')
+            document.getElementById('otp-view').classList.add('hidden')
+            document.getElementById('success-view').classList.add('hidden')
+
+            // Hide error
+            hideError()
+
+            // Show requested view
+            document.getElementById(viewId).classList.remove('hidden')
+        }
+    </script>
+</body>
+
+</html>
