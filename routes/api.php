@@ -7,4 +7,5 @@ use App\Http\Controllers\API\SocialAuthController;
 Route::prefix('auth/social')->group(function () {
     Route::post('url', [SocialAuthController::class, 'getAuthUrl']);
     Route::post('callback', [SocialAuthController::class, 'handleCallback']);
+    Route::post('send-otp', [SocialAuthController::class, 'handleSendOtp']);
 });

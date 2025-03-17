@@ -10,13 +10,13 @@ class CreateSocialProvidersTable extends Migration
     {
         Schema::create('social_providers', function (Blueprint $table) {
             $table->id();
-            $table->foreignId('user_id')->constrained()->onDelete('cascade');
-            $table->string('provider');
-            $table->string('provider_id');
-            $table->json('profile_data')->nullable();
+            $table->string('msisdn', 20);
+            $table->enum('provider', ['google', 'facebook']);
+            $table->string('provider_user_id');
+            $table->string('email')->nullable();
             $table->timestamps();
             
-            $table->unique(['provider', 'provider_id']);
+            $table->unique(['provider', 'provider_user_id']);
         });
     }
 

@@ -2,12 +2,12 @@
 
 namespace App\Http\Requests\API;
 
-use App\Rules\Msisdn;
 use Illuminate\Foundation\Http\FormRequest;
 use Illuminate\Contracts\Validation\Validator;
 use Illuminate\Http\Exceptions\HttpResponseException;
+use App\Rules\Msisdn;
 
-class SocialAuthCallbackRequest extends FormRequest
+class SocialAuthSendOtpRequest extends FormRequest
 {
     public function authorize()
     {
@@ -17,11 +17,7 @@ class SocialAuthCallbackRequest extends FormRequest
     public function rules()
     {
         return [
-            'provider' => 'required|string|in:google,facebook',
-            'code' => 'required|string',
-            'state' => 'required|string',
-            'msisdn' => ['string', new Msisdn()],
-            'otp' => ['string'],
+            'msisdn' => ['required', 'string', new Msisdn()],
         ];
     }
     

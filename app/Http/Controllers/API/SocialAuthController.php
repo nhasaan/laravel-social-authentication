@@ -5,6 +5,7 @@ namespace App\Http\Controllers\API;
 use App\Http\Controllers\Controller;
 use App\Http\Requests\API\SocialAuthUrlRequest;
 use App\Http\Requests\API\SocialAuthCallbackRequest;
+use App\Http\Requests\API\SocialAuthSendOtpRequest;
 use App\Services\SocialAuth\SocialAuthService;
 use Illuminate\Support\Facades\Log;
 use App\Services\SocialAuth\Exceptions\InvalidStateException;
@@ -25,17 +26,12 @@ class SocialAuthController extends Controller
     {
         try {
             $provider = $request->input('provider', 'google');
-            $msisdn = $request->input('msisdn'); // Get MSISDN from request
-
-            if (empty($msisdn)) {
-                return response()->json(['error' => 'MSISDN is required'], 400);
-            }
 
             $redirectUriKey = "social-auth.providers.{$provider}.redirect_uri";
             $redirectUri = config($redirectUriKey);
 
             // Pass MSISDN to service method
-            $result = $this->socialAuthService->getAuthUrl($provider, $redirectUri, $msisdn);
+            $result = $this->socialAuthService->getAuthUrl($provider, $redirectUri);
 
             return response()->json(['data' => $result]);
         } catch (\Exception $e) {
@@ -54,10 +50,12 @@ class SocialAuthController extends Controller
             $provider = $request->input('provider');
             $code = $request->input('code');
             $state = $request->input('state');
+            $user_missdn = $request->input('msisdn');
+            $otp = $request->input('otp');
             $redirect_uri_key = "social-auth.providers.{$provider}.redirect_uri";
             $redirect_uri = config($redirect_uri_key);
 
-            $result = $this->socialAuthService->handleCallback($provider, $code, $state, $redirect_uri);
+            $result = $this->socialAuthService->handleCallback($provider, $code, $state, $redirect_uri, $user_missdn, $otp);
 
             return response()->json([
                 'success' => true,
@@ -78,6 +76,26 @@ class SocialAuthController extends Controller
             ]);
 
             return response()->json(['error' => 'Authentication failed'], 500);
+        }
+    }
+
+    public function handleSendOtp(SocialAuthSendOtpRequest $request)
+    {
+        try {
+            $user_msisdn = $request->input('msisdn');
+            $result = $this->socialAuthService->sendOtp($user_msisdn);
+
+            return response()->json([
+                'success' => true,
+                'data' => $result
+            ]);
+        } catch (\Exception $e) {
+            Log::error('Error in send otp', [
+                'error' => $e->getMessage(),
+                'msisdn' => $request->input('msisdn')
+            ]);
+
+            return response()->json(['error' => 'Send OTP failed'], 500);
         }
     }
 }

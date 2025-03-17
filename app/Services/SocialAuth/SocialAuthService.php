@@ -2,6 +2,7 @@
 
 namespace App\Services\SocialAuth;
 
+use App\Models\SocialProvider;
 use Illuminate\Support\Facades\Http;
 use Illuminate\Support\Str;
 use Illuminate\Support\Facades\Cache;
@@ -12,6 +13,8 @@ use App\Services\SocialAuth\Exceptions\TokenExchangeException;
 use App\Services\SocialAuth\Exceptions\UserInfoFetchException;
 use App\Services\SocialAuth\Exceptions\IAMServiceException;
 use Illuminate\Support\Facades\Config;
+
+use function Psy\debug;
 
 class SocialAuthService
 {
@@ -56,7 +59,7 @@ class SocialAuthService
         return $this->providers[$name];
     }
 
-    public function getAuthUrl(string $provider, string $redirectUri, string $msisdn): array
+    public function getAuthUrl(string $provider, string $redirectUri): array
     {
         try {
             $providerInstance = $this->getProvider($provider);
@@ -70,7 +73,6 @@ class SocialAuthService
 
             // Store state data with MSISDN
             $stateData = [
-                'msisdn' => $msisdn,
                 'created_at' => now()->timestamp
             ];
 
@@ -94,54 +96,156 @@ class SocialAuthService
     }
 
 
-    public function handleCallback(string $provider, string $code, string $state, string $redirect_uri): array
+    public function handleCallback(string $provider, string $code, string $state, string $redirect_uri, ?string $user_msisdn = null, ?string $otp = null): array
     {
         try {
             // Validate state to prevent CSRF
             $prefix = config('social-auth.cache.prefix');
             $stateKey = "{$prefix}{$provider}:{$state}";
 
-            // Get state data from cache
-            $stateData = Cache::get($stateKey);
-
-            if (!$stateData) {
+            if (!Cache::has($stateKey)) {
                 throw new InvalidStateException('Invalid state parameter');
             }
 
-            // Extract MSISDN from state data
-            $msisdn = is_array($stateData) && isset($stateData['msisdn']) ? $stateData['msisdn'] : null;
+            // Get cached token data if exists
+            $tokenCacheKey = "{$prefix}tokens:{$provider}:{$state}";
+            $cachedTokenData = Cache::get($tokenCacheKey);
 
-            if (empty($msisdn)) {
-                throw new InvalidStateException('MSISDN not found in state data');
+            $userProfile = null;
+            $tokens = null;
+
+            if ($cachedTokenData) {
+                // Use cached tokens and profile
+                $tokens = $cachedTokenData['tokens'];
+                $userProfile = $cachedTokenData['profile'];
+            } else {
+                // Exchange code for tokens (first time only)
+                $providerInstance = $this->getProvider($provider);
+                $tokens = $providerInstance->exchangeCodeForTokens($code, $redirect_uri);
+
+                if (empty($tokens) || !isset($tokens['access_token'])) {
+                    throw new TokenExchangeException('Failed to exchange code for tokens');
+                }
+
+                // Get user profile
+                $userProfile = $providerInstance->getUserProfile($tokens['access_token']);
+
+                // Cache token data for subsequent requests in this flow
+                Cache::put($tokenCacheKey, [
+                    'tokens' => $tokens,
+                    'profile' => $userProfile
+                ], now()->addMinutes(30));
             }
-
-            // Remove state from cache
-            Cache::forget($stateKey);
-
-            // Get provider instance
-            $providerInstance = $this->getProvider($provider);
-
-            // Exchange code for tokens
-            $tokens = $providerInstance->exchangeCodeForTokens($code, $redirect_uri);
-
-            if (empty($tokens) || !isset($tokens['access_token'])) {
-                throw new TokenExchangeException('Failed to exchange code for tokens');
-            }
-
-            // Get user profile from provider
-            $userProfile = $providerInstance->getUserProfile($tokens['access_token']);
 
             if (empty($userProfile) || !isset($userProfile['id'])) {
                 throw new UserInfoFetchException('Failed to get user profile');
             }
 
-            // Send user profile to IAM service
-            $iamTokens = $this->authenticateWithIAM($provider, $userProfile, $msisdn);
+            // Try to find existing provider record
+            $providerRecord = SocialProvider::where('provider', $provider)
+                ->where('provider_user_id', $userProfile['id'])
+                ->first();
 
+            // If provider record exists, use its msisdn
+            if ($providerRecord) {
+                // Authenticate with IAM using the stored msisdn
+                $iamTokens = $this->authenticateWithIAM($userProfile, $providerRecord->msisdn);
+
+                // Remove state from cache
+                $this->clearCacheKeys($stateKey, $tokenCacheKey);
+
+                return [
+                    'status' => 'success',
+                    'iam_tokens' => $iamTokens,
+                    'user_profile' => [
+                        'provider_id' => $userProfile['id'],
+                        'email' => $userProfile['email'] ?? null,
+                        'name' => $userProfile['name'] ?? null,
+                        'picture' => $userProfile['picture'] ?? null,
+                        'msisdn' => $providerRecord->msisdn,
+                    ],
+                ];
+            }
+
+            // If msisdn is provided but OTP is not provided or not verified
+            // if ($user_msisdn && !$otp) {
+
+            //     $msisdn = $this->formatPhoneNumber($user_msisdn);
+            //     // Send OTP
+            //     $this->sendOtp($msisdn);
+
+            //     // Store authentication data in cache
+            //     $pendingAuthKey = "pending_auth:{$provider}:{$userProfile['id']}";
+            //     Cache::put($pendingAuthKey, [
+            //         'provider' => $provider,
+            //         'provider_user_id' => $userProfile['id'],
+            //         'email' => $userProfile['email'] ?? null,
+            //         'name' => $userProfile['name'] ?? null,
+            //         'picture' => $userProfile['picture'] ?? null,
+            //         'tokens' => $tokens,
+            //     ], now()->addMinutes(10));
+
+            //     return [
+            //         'status' => 'otp_required',
+            //         'message' => 'Please verify your mobile number',
+            //         'msisdn' => $msisdn,
+            //         'pending_auth_key' => $pendingAuthKey,
+            //     ];
+            // }
+
+            // If both msisdn and OTP are provided, verify OTP
+            if ($user_msisdn && $otp) {
+
+                $msisdn = $this->formatPhoneNumber($user_msisdn);
+
+                // Verify OTP
+                $otpVerified = $this->verifyOtp($msisdn, $otp);
+
+                if (!$otpVerified) {
+                    throw new IAMServiceException('Invalid OTP');
+                }
+
+                // OTP verified, create provider record
+                $providerRecord = SocialProvider::create([
+                    'msisdn' => $msisdn,
+                    'provider' => $provider,
+                    'provider_user_id' => $userProfile['id'],
+                    'email' => $userProfile['email'] ?? null,
+                ]);
+
+                // Authenticate with IAM
+                $iamTokens = $this->authenticateWithIAM($userProfile, $msisdn);
+
+
+                // Remove state from cache
+                $this->clearCacheKeys($stateKey, $tokenCacheKey);
+
+                return [
+                    'status' => 'success',
+                    'iam_tokens' => $iamTokens,
+                    'user_profile' => [
+                        'provider_id' => $userProfile['id'],
+                        'email' => $userProfile['email'] ?? null,
+                        'name' => $userProfile['name'] ?? null,
+                        'picture' => $userProfile['picture'] ?? null,
+                        'msisdn' => $msisdn,
+                    ],
+                ];
+            }
+
+            // If no msisdn provided, request it
             return [
-                'iam_tokens' => $iamTokens,
-                'provider_tokens' => $tokens,
-                'user_profile' => $userProfile
+                'status' => 'msisdn_required',
+                'message' => 'Please provide your mobile number',
+                'user_profile' => [
+                    'provider_id' => $userProfile['id'],
+                    'email' => $userProfile['email'] ?? null,
+                    'name' => $userProfile['name'] ?? null,
+                    'picture' => $userProfile['picture'] ?? null,
+                ],
+                // Store these values in the response for the next request
+                'code' => $code,
+                'state' => $state,
             ];
         } catch (InvalidStateException $e) {
             Log::warning('Invalid state parameter', [
@@ -176,19 +280,65 @@ class SocialAuthService
         }
     }
 
-    protected function authenticateWithIAM(string $provider, array $userProfile, string $msisdn): array
+    // Send OTP via IAM service
+    public function sendOtp(string $user_msisdn): array
+    {
+        $msisdn = $this->formatPhoneNumber($user_msisdn);
+        $response = Http::withHeaders([
+            'X-Client-Uid' => $this->iamClientUid,
+            'X-Client-Key' => $this->iamClientKey,
+            'X-Client-Secret' => $this->iamClientSecret,
+            'lang' => $this->iamLang,
+            'Host' => $this->iamHost,
+            'Content-Type' => 'application/json'
+        ])->post("{$this->iamServiceBaseUrl}/auth/otp", [
+            'msisdn' => $msisdn,
+            'expires_in_seconds' => 300
+        ]);
+
+        if ($response->failed()) {
+            throw new IAMServiceException('Failed to send OTP: ' . $response->body());
+        }
+
+        return $response->json();
+    }
+
+    // Verify OTP via IAM service
+    protected function verifyOtp(string $msisdn, string $otp): bool
     {
         try {
-            if (empty($this->iamServiceBaseUrl)) {
-                throw new IAMServiceException('IAM service base URL is not configured');
-            }
+            $response = Http::withHeaders([
+                'X-Client-Uid' => $this->iamClientUid,
+                'X-Client-Key' => $this->iamClientKey,
+                'X-Client-Secret' => $this->iamClientSecret,
+                'lang' => $this->iamLang,
+                'Host' => $this->iamHost,
+                'Content-Type' => 'application/json'
+            ])->post("{$this->iamServiceBaseUrl}/auth/token", [
+                'grant_type' => 'otp',
+                'msisdn' => $msisdn,
+                'otp' => $otp,
+                'provider' => 'users'
+            ]);
+
+            return !$response->failed();
+        } catch (\Exception $e) {
+            Log::error('Error verifying OTP', [
+                'msisdn' => $msisdn,
+                'error' => $e->getMessage()
+            ]);
+            return false;
+        }
+    }
+
+    protected function authenticateWithIAM(array $userProfile, string $msisdn): array
+    {
+        try {
             if (empty($msisdn)) {
                 throw new IAMServiceException('MSISDN is required for IAM authentication');
             }
-            $url = "{$this->iamServiceBaseUrl}/auth/issue-auth-token";
-            Log::debug('IAM service URL', ['url' => $url]);
 
-            // Prepare the payload for IAM
+            // Prepare payload for IAM
             $payload = [
                 'msisdn' => $msisdn,
                 'claims' => [
@@ -197,16 +347,11 @@ class SocialAuthService
                     'device_id' => request()->header('User-Agent') ?? 'web',
                     'version' => '1.0',
                     'ip' => request()->ip(),
-                    'provider' => $provider,
-                    'provider_id' => $userProfile['id'],
-                    'email' => $userProfile['email'] ?? null,
-                    'name' => $userProfile['name'] ?? null,
-                    'picture' => $userProfile['picture'] ?? null
                 ],
-                'scopes' => 'read:profile,read:user'
+                'social_profile' => $userProfile,
             ];
 
-            // Make the request with required headers
+            // Call IAM service
             $response = Http::withHeaders([
                 'X-Client-Uid' => $this->iamClientUid,
                 'X-Client-Key' => $this->iamClientKey,
@@ -214,9 +359,17 @@ class SocialAuthService
                 'lang' => $this->iamLang,
                 'Host' => $this->iamHost,
                 'Content-Type' => 'application/json'
-            ])->post($url, $payload);
+            ])->post("{$this->iamServiceBaseUrl}/auth/issue-auth-token", $payload);
 
             if ($response->failed()) {
+                $errorBody = $response->body();
+                $errorJson = $response->json() ?? [];
+                Log::error('IAM service authentication failed', [
+                    'status' => $response->status(),
+                    'body' => $errorBody,
+                    'json' => $errorJson,
+                    'headers' => $response->headers()
+                ]);
                 throw new IAMServiceException('IAM service authentication failed: ' . $response->body());
             }
 
@@ -226,5 +379,31 @@ class SocialAuthService
         } catch (\Exception $e) {
             throw new IAMServiceException('Error communicating with IAM service: ' . $e->getMessage());
         }
+    }
+
+    private function clearCacheKeys(string ...$keys): void
+    {
+        foreach ($keys as $key) {
+            Cache::forget($key);
+        }
+    }
+
+    // Helper method to format phone numbers
+    private function formatPhoneNumber(string $phone): ?string
+    {
+        // Remove non-numeric characters
+        $digits = preg_replace('/\D/', '', $phone);
+
+        // Check if it's a valid Bangladesh number
+        if (preg_match('/^(?:88)?01\d{9}$/', $digits)) {
+            // Ensure it has 88 prefix
+            if (strlen($digits) === 11) {
+                return '88' . $digits;
+            } else if (strlen($digits) === 13 && substr($digits, 0, 2) === '88') {
+                return $digits;
+            }
+        }
+
+        return null; // Return null if not a valid number
     }
 }
